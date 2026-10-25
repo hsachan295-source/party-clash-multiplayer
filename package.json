@@ -1,0 +1,29 @@
+{
+  "name": "party-clash-after-hours-trivia",
+  "version": "1.0.0",
+  "description": "Party Clash: After Hours Trivia — a real-time 2–8 player trivia game on Netlify Functions + Blobs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc",
+    "test": "tsx --test tests/*.test.ts",
+    "test:blobs": "tsx tests/run-blobs.ts",
+    "test:e2e": "node tests/e2e/browser-game.mjs"
+  },
+  "dependencies": {
+    "@netlify/blobs": "11.1.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "playwright-core": "1.55.0",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vite": "8.3.4"
+  },
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  }
+}

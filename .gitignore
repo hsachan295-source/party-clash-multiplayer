@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# Netlify local state / build cache
+.netlify/
+.netlify-local/
+
+# test artifacts
+test-results/
+
+# logs & temp
+*.log
+npm-debug.log*
+*.tmp
+.cache/
+.vite/
+
+# env / secrets (none are needed, but never commit them)
+.env
+.env.*
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# packaged deploy archive
+netlify-ready-game.zip
