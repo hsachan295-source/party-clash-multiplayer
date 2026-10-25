@@ -1,8 +1,18 @@
 # Party Clash: After Hours Trivia
 
+**▶ Play now: https://phenomenal-kelpie-848538.netlify.app/**
+
 A real-time multiplayer trivia game show for **2–8 players** on their own phones or computers. One player creates a room and shares a 4-letter code. Everyone answers the same question against the same clock, and the fastest correct answers win.
 
 Built with TypeScript + Vite on the front end, a single **Netlify Function** on the back end, and **Netlify Blobs** for room state. It needs no database, API keys, environment variables or paid services.
+
+---
+
+## Live Demo
+
+🎮 **https://phenomenal-kelpie-848538.netlify.app/**
+
+Open the link on any phone or computer. One player taps **Create Room** and shares the 4-letter room code. **2–8 players** can then join remotely from their own devices by entering that code. No app or account is needed.
 
 ---
 
@@ -50,9 +60,20 @@ In `npm run dev`, Vite serves `/.netlify/functions/game` from the **same handler
 
 ## Architecture
 
-![Party Clash Architecture](docs/party-clash-architecture.svg)
+![Party Clash Architecture](docs/architecture.svg)
 
-*Editable source: [`docs/party-clash-architecture.drawio`](docs/party-clash-architecture.drawio). Open it in [draw.io](https://app.diagrams.net) or draw.io Desktop.*
+**How a move travels:** Players on phone/desktop → Frontend UI → `/.netlify/functions/game` → Netlify Function → Game Logic / server-side scoring → Netlify Blobs → synchronized state back to all players.
+
+**Game flow:** Create Room → Join Room → Lobby → Start Game → Trivia Round → Submit Answers → Score → Leaderboard → Next Round (×8) → Final Winner → Rematch.
+
+<details>
+<summary>Detailed technical diagram</summary>
+
+![Party Clash detailed architecture](docs/party-clash-architecture.svg)
+
+Editable source: [`docs/party-clash-architecture.drawio`](docs/party-clash-architecture.drawio). Open it in [draw.io](https://app.diagrams.net).
+
+</details>
 
 **Frontend.** A single-page app in vanilla TypeScript, built with Vite (`src/main.ts`, `src/styles.css`). It has no framework. Each screen is a render function: landing, create, join, lobby, how-to-play, question, results with leaderboard, and final winner with rematch. The page re-renders only when the room state changes. A 100 ms tick updates timers in place, and the layout is mobile-first from 360 px phones up to desktop.
 
@@ -117,8 +138,9 @@ In `npm run dev`, Vite serves `/.netlify/functions/game` from the **same handler
 │       ├── browser-game.mjs         # 3-player browser end-to-end game (desktop and phones)
 │       └── stress.mjs               # 8-client concurrency stress test
 ├── docs/
+│   ├── architecture.svg                  # Simple architecture + game-flow diagram (README)
 │   ├── party-clash-architecture.drawio   # Editable architecture and game-flow diagram
-│   ├── party-clash-architecture.svg      # Exported diagram used in this README
+│   ├── party-clash-architecture.svg      # Detailed technical diagram (export of the .drawio)
 │   └── generate_architecture_drawio.py   # Regenerates the .drawio from the implementation's facts
 ├── netlify.toml                     # Build command, publish dir, functions dir, headers
 ├── vite.config.ts                   # Vite build, plus a dev-server route for the game API
