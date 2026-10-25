@@ -48,41 +48,83 @@ In `npm run dev`, Vite serves `/.netlify/functions/game` from the **same handler
 
 ---
 
-## Project structure
+## Architecture
 
-```
-├── index.html                 # App shell
-├── public/favicon.svg
-├── src/                       # Front end (vanilla TypeScript, no framework)
-│   ├── main.ts                # Screens, rendering, polling, input handling
-│   ├── api.ts                 # Calls /.netlify/functions/game and syncs the clock
-│   ├── session.ts             # Player identity in localStorage (refresh recovery)
-│   └── styles.css             # Late-night game-show theme, mobile-first
-├── shared/types.ts            # Public API types and game constants (no secrets)
-├── server/                    # Back-end helpers (kept outside netlify/functions)
-│   ├── logic.ts               # Pure game rules: join, start, answer, scoring, rounds, winners
-│   ├── handler.ts             # HTTP layer and optimistic-concurrency retry loop
-│   ├── store.ts               # Netlify Blobs store, plus in-memory store for dev and tests
-│   └── questions.ts           # Question bank (server-only; never sent to the browser)
-├── netlify/functions/game.ts  # The Netlify Function (endpoint: /.netlify/functions/game)
-├── dev/local-blobs.ts         # Starts Netlify's Blobs emulator for test:blobs
-├── tests/                     # API test suite and browser/stress E2E scripts
-├── netlify.toml
-├── vite.config.ts
-└── tsconfig.json
-```
+![Party Clash Architecture](docs/party-clash-architecture.svg)
+
+*Editable source: [`docs/party-clash-architecture.drawio`](docs/party-clash-architecture.drawio). Open it in [draw.io](https://app.diagrams.net) or draw.io Desktop.*
+
+**Frontend.** A single-page app in vanilla TypeScript, built with Vite (`src/main.ts`, `src/styles.css`). It has no framework. Each screen is a render function: landing, create, join, lobby, how-to-play, question, results with leaderboard, and final winner with rematch. The page re-renders only when the room state changes. A 100 ms tick updates timers in place, and the layout is mobile-first from 360 px phones up to desktop.
+
+**Multiplayer synchronization.** Every browser polls the `state` action about once a second (every 0.8 s during a question, every 4 s in a background tab). Each poll returns the same public view of the room, so all players see the same lobby, round, countdown, results, leaderboard and winner. Clients estimate their offset from the server clock (`src/api.ts`) so countdowns match across devices.
+
+**Netlify Function API.** There is one endpoint, `POST /.netlify/functions/game` (`netlify/functions/game.ts` → `server/handler.ts`), with the actions `create`, `join`, `state`, `start`, `answer`, `rematch` and `leave`. The handler validates the method, body size, JSON, action, room code and player token. It then runs a read → apply rules → conditional write loop and retries up to 12 times if another player wrote first.
+
+**Netlify Blobs state storage.** Each room is one JSON document in the store `party-clash-rooms` under the key `room-<CODE>`. It holds game status, players (with secret tokens), scores, the current question and deadlines, submitted answers, results, winners and timestamps. Reads use strong consistency. Writes use `onlyIfNew` when a room is created and `onlyIfMatch: <ETag>` for every update, so simultaneous actions never overwrite each other.
+
+**Server-side scoring and timing.** All rules live in `server/logic.ts`:
+- Questions carry server `startsAt` / `endsAt` times: a 3.5 s lead-in for round 1 and 2.5 s after that, 15 s to answer, then a 6 s reveal.
+- `advance()` closes a question when every connected player has answered or time runs out, then moves to the next round or the final screen.
+- `submitAnswer()` rejects duplicate, early, late (beyond a 300 ms grace) and invalid answers.
+- Scoring is 500 points + up to 500 speed bonus. Ties go to most correct answers, then fastest total time, then a shared win.
+- The correct answer, other players' picks and tokens never leave the server before the reveal. The 88-question bank (`server/questions.ts`) is not in the browser bundle.
+
+**Refresh and session recovery.** `src/session.ts` keeps `{ room code, playerId, secret token, nickname }` in `localStorage`. After a refresh the app calls `state` with the saved session and resumes the same seat, score and locked-in answer. Invite links carry `?room=CODE`. If the host is gone for 20 s, host controls pass to another connected player.
+
+**Production deployment flow.** GitHub (`main`) → Netlify build (`netlify.toml`: `npm run build` = `tsc` + `vite build` → `dist/`; esbuild bundles `netlify/functions/game.ts`) → Netlify serves the static front end from its CDN and the function at `/.netlify/functions/game`, with Netlify Blobs built in → public URL. No environment variables, API keys or database setup are needed.
 
 ---
 
-## Multiplayer architecture
+## Game Flow
 
-- **One endpoint.** The browser `POST`s JSON to `/.netlify/functions/game` with an `action`: `create`, `join`, `state`, `start`, `answer`, `rematch` or `leave`.
-- **Authoritative server state.** Each room is a single JSON document in the Netlify Blobs store `party-clash-rooms`, under the key `room-<CODE>`. The function loads it, applies the rules in `server/logic.ts`, and saves it.
-- **No lost updates.** Reads use `consistency: "strong"`. Writes are **conditional**: `onlyIfNew` when a room is created, and `onlyIfMatch: <etag>` for every update. If two players act at the same moment, one write wins. The other gets a precondition failure, then re-reads and re-applies its action (with retries and jittered backoff). This was tested with 8 players answering in the same instant.
-- **Server-owned timing.** Questions carry `startsAt` and `endsAt` timestamps set by the server. A question closes when every connected player has answered or the deadline passes. Reveals end on a fixed schedule. These transitions happen lazily on the next request from any player, so the game never depends on the host's device or a background timer. Clients estimate their offset from the server clock so countdowns match on every device.
-- **Sync by polling.** Each client polls `state` about once a second, faster during questions. Polls are read-only unless the game needs to move forward. Heartbeats are written at most every 5 seconds per player.
-- **Cheat resistance.** Clients only send *which option* they picked. Scores, timing and correctness are computed on the server, and extra fields such as `score` are ignored. The correct answer is never in any response until the round closes, and the question bank is not in the browser bundle. Other players' picks are hidden until the reveal. Every action requires the player's secret token. Duplicate answers, late answers, answers sent too early, bad options, actions by non-hosts, joins when the room is full or mid-game, and duplicate nicknames (case-insensitive) are all rejected on the server.
-- **Refresh and disconnect handling.** The room code, player id and token are kept in `localStorage`, so a refresh rejoins as the same player with the same score and locked-in answer. If the host disappears for 20 seconds, host controls pass to the next connected player. Lobby players who vanish for 60 seconds are removed.
+**Create Room → Join Room → Lobby → Start → 8 Trivia Rounds → Score/Leaderboard → Winner → Rematch**
+
+1. **Create Room.** The host enters a nickname and gets a 4-letter code with no look-alike letters, plus an invite link.
+2. **Join Room.** Players enter the code and a nickname, or open the link. Wrong codes, full rooms, games in progress and duplicate nicknames get clear errors.
+3. **Lobby.** All devices show the player list (n/8) live. The host's **Start Game** button unlocks once at least 2 players are in. Everyone else sees "Waiting for host…".
+4. **Start.** The host starts, and the server picks 8 random, non-repeating questions and schedules round 1.
+5. **8 Trivia Rounds.** Each round: everyone sees "Get ready", then the same question with a 15 s timer and 4 options. Each player taps one answer, which locks in.
+6. **Score/Leaderboard.** When all players have answered or time is up, the server scores the round. Everyone sees the correct answer, who picked what, the points earned and the updated leaderboard. The next round starts automatically after 6 s.
+7. **Winner.** After round 8 the final screen shows the champion or co-champions, a podium and the final standings.
+8. **Rematch.** The host taps **Play Again** and everyone returns to the same lobby with scores reset and new questions. Players can leave, and new players can join.
+
+---
+
+## Project Structure
+
+```
+├── index.html                       # App shell (mounts #app)
+├── public/favicon.svg               # Site icon
+├── src/                             # FRONTEND (browser)
+│   ├── main.ts                      # All screens, rendering, polling loop, input handling, refresh resume
+│   ├── api.ts                       # POST client for /.netlify/functions/game and server-clock sync
+│   ├── session.ts                   # Player/session identity in localStorage
+│   └── styles.css                   # Late-night game-show theme, responsive and mobile-first
+├── shared/
+│   └── types.ts                     # Public API types and game constants (players, rounds, timers, points)
+├── server/                          # BACKEND helpers (bundled into the function)
+│   ├── handler.ts                   # Request validation, action routing, read→apply→conditional-write retry loop
+│   ├── logic.ts                     # Authoritative rules: rooms, joining, timing, answers, scoring, winners, host, rematch
+│   ├── store.ts                     # Netlify Blobs room store (production), in-memory store (dev and tests)
+│   └── questions.ts                 # Server-only trivia question bank (88 questions)
+├── netlify/
+│   └── functions/game.ts            # Netlify Function entry → /.netlify/functions/game
+├── dev/local-blobs.ts               # Starts Netlify's local Blobs emulator (used by test:blobs)
+├── tests/
+│   ├── multiplayer.test.ts          # API test suite: full games, ties, security, concurrency
+│   ├── run-blobs.ts                 # Runs the suite through @netlify/blobs and the emulator
+│   └── e2e/
+│       ├── browser-game.mjs         # 3-player browser end-to-end game (desktop and phones)
+│       └── stress.mjs               # 8-client concurrency stress test
+├── docs/
+│   ├── party-clash-architecture.drawio   # Editable architecture and game-flow diagram
+│   ├── party-clash-architecture.svg      # Exported diagram used in this README
+│   └── generate_architecture_drawio.py   # Regenerates the .drawio from the implementation's facts
+├── netlify.toml                     # Build command, publish dir, functions dir, headers
+├── vite.config.ts                   # Vite build, plus a dev-server route for the game API
+├── tsconfig.json                    # Strict TypeScript config
+└── package.json / package-lock.json # Scripts and pinned dependencies
+```
 
 ---
 
